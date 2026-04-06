@@ -1,0 +1,15 @@
+[project]
+name = "tp2-glo7030"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "torch",
+    "torchvision",
+    "transformers",
+    "matplotlib",
+    "tqdm",
+    "poutyne",
+    "pandas",
+    "positional-encodings[pytorch]",
+]
