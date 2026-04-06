@@ -76,6 +76,7 @@ if __name__ == '__main__':
         separate_train_test('data/CUB_200_2011/CUB_200_2011/images', data_root / 'train', data_root / 'test')
 
     # TODO Faire les transformations
+    # Resize 
     train_transform = T.Compose([])
     test_transform = T.Compose([])
 
