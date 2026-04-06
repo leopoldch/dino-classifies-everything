@@ -1,0 +1,10 @@
+numpy
+torch
+torchvision
+transformers
+matplotlib
+tqdm
+poutyne
+pandas
+positional-encodings[pytorch]
+
