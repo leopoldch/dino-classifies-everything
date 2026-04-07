@@ -13,4 +13,5 @@ dependencies = [
     "pandas",
     "positional-encodings[pytorch]",
     "kagglehub>=1.0.0",
+    "kaggle",
 ]

@@ -1,12 +1,15 @@
 import kagglehub
 import shutil
 from pathlib import Path
+from config import Config
+
+config = Config()
 
 # il faut mettre les identifiants dans ~/.kaggle/kaggle.json
 # créer légacy token et mv le kaggle.json
 
-DATASET_NAME = "ou-suis-je-h-2026"
-DATA_DIR = Path(__file__).resolve().parents[0] / "data"
+DATASET_NAME = config.COMPETITION
+DATA_DIR = config.DATA_DIR 
 
 def download():
     DATA_DIR.mkdir(exist_ok=True)
