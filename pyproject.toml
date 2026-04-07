@@ -12,4 +12,5 @@ dependencies = [
     "poutyne",
     "pandas",
     "positional-encodings[pytorch]",
+    "kagglehub>=1.0.0",
 ]
