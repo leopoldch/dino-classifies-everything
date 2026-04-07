@@ -20,8 +20,9 @@ def submit(csv_path: Path, message: str = "submission"):
             ["kaggle", "competitions", "submit", "-c", COMPETITION, "-f", str(csv_path), "-m", message],
             check=True,
         )
-    finally:
-        csv_path.unlink(missing_ok=True)
+        print("submission done")
+    except:
+        print("error submitting")
 
 if __name__ == "__main__":
     import argparse
