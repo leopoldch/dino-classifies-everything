@@ -31,7 +31,7 @@ def make_test(model, classes, batch_size=BATCH_SIZE):
 
     with open("submission.csv", "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["id", "label"])
+        writer.writerow(["image_name", "class"])
         for path, pred in zip(test_files, preds):
             writer.writerow([path.stem, classes[pred]])
 
