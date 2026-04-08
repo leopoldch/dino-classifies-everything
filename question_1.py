@@ -77,8 +77,12 @@ if __name__ == '__main__':
 
     # TODO Faire les transformations
     # Resize 
-    train_transform = T.Compose([])
-    test_transform = T.Compose([])
+    train_transform = T.Compose([
+        T.Resize((224,224))
+    ])
+    test_transform = T.Compose([
+        T.Resize((224,224))
+    ])
 
     train_dataset = torchvision.datasets.ImageFolder(f'{data_root}/train', transform=train_transform)
     test_dataset = torchvision.datasets.ImageFolder(f'{data_root}/test', transform=test_transform)
@@ -89,8 +93,8 @@ if __name__ == '__main__':
     noisy_train_dataset = NoisyLabelDataset(train_dataset, num_classes=num_classes, noise_percentage=0.1)
     
     # Pour utiliser un modèle pré-entraîné DINOv2 (voir : https://huggingface.co/facebook/dinov2-small et https://huggingface.co/docs/transformers/model_doc/dinov2#transformers.Dinov2ForImageClassification)
-    model = AutoModelForImageClassification.from_pretrained(
-        'facebook/dinov2-small',
-        num_labels=num_classes,
-        ignore_mismatched_sizes=True,
-    )
+   # model = AutoModelForImageClassification.from_pretrained(
+    #    'facebook/dinov2-small',
+     #   num_labels=num_classes,
+      #  ignore_mismatched_sizes=True,
+    #)
