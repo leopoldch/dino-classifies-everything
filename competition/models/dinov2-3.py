@@ -43,9 +43,7 @@ SEED = 42
 train_transform = transforms.Compose([
     transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.6, 1.0)),
     transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-    transforms.RandomGrayscale(p=0.1),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
@@ -67,9 +65,7 @@ val_transform_336 = transforms.Compose([
 train_transform_336 = transforms.Compose([
     transforms.RandomResizedCrop((FINAL_IMAGE_SIZE, FINAL_IMAGE_SIZE), scale=(0.6, 1.0)),
     transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-    transforms.RandomGrayscale(p=0.1),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
@@ -116,12 +112,13 @@ if __name__ == "__main__":
     )
 
     hf_model = AutoModelForImageClassification.from_pretrained(
-        "facebook/dinov2-large", num_labels=len(classes), ignore_mismatched_sizes=True,
+        "facebook/dinov2-with-registers-large", num_labels=len(classes), ignore_mismatched_sizes=True,
     )
     network = DINOv2Wrapper(hf_model)
+    backbone = hf_model.dinov2_with_registers if hasattr(hf_model, "dinov2_with_registers") else hf_model.dinov2
 
     # tête seulement
-    for param in hf_model.dinov2.parameters():
+    for param in backbone.parameters():
         param.requires_grad = False
 
     model = Model(
@@ -146,18 +143,18 @@ if __name__ == "__main__":
     del model.optimizer
     torch.cuda.empty_cache()
 
-    for param in hf_model.dinov2.parameters():
+    for param in backbone.parameters():
         param.requires_grad = False
-    for block in hf_model.dinov2.encoder.layer[-UNFREEZE_LAST_N:]:
+    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
         for param in block.parameters():
             param.requires_grad = True
-    for param in hf_model.dinov2.layernorm.parameters():
+    for param in backbone.layernorm.parameters():
         param.requires_grad = True
 
     hf_model.gradient_checkpointing_enable()
 
-    backbone_params = list(hf_model.dinov2.layernorm.parameters())
-    for block in hf_model.dinov2.encoder.layer[-UNFREEZE_LAST_N:]:
+    backbone_params = list(backbone.layernorm.parameters())
+    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
         backbone_params.extend(block.parameters())
 
     model.optimizer = torch.optim.AdamW(
@@ -182,8 +179,8 @@ if __name__ == "__main__":
     del model.optimizer
     torch.cuda.empty_cache()
 
-    backbone_params = list(hf_model.dinov2.layernorm.parameters())
-    for block in hf_model.dinov2.encoder.layer[-UNFREEZE_LAST_N:]:
+    backbone_params = list(backbone.layernorm.parameters())
+    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
         backbone_params.extend(block.parameters())
 
     model.optimizer = torch.optim.AdamW(
