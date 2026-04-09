@@ -211,5 +211,5 @@ def train():
     run.finish()
 
 if __name__ == "__main__":
-    sweep_id = wandb.sweep(project="tp2-glo7030", entity="lacha188-universit-laval", config=SWEEP_CONFIG)
+    sweep_id = wandb.sweep(SWEEP_CONFIG, project="tp2-glo7030", entity="lacha188-universit-laval")
     wandb.agent(sweep_id, train) 
