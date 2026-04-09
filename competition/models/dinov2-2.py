@@ -9,7 +9,7 @@ from torchvision import datasets, transforms
 from transformers import AutoModelForImageClassification
 from poutyne import Model, ModelCheckpoint, EarlyStopping
 from config import Config
-from utils import DINOv2Wrapper
+from utils import DINOv2Wrapper, split_by_base_image
 from make_test import make_test
 
 torch.backends.cudnn.benchmark = True
@@ -28,7 +28,7 @@ VAL_SPLIT = 0.1
 LR_HEAD = 5e-4
 LR_FULL = 1e-5
 EPOCHS_HEAD = 20
-EPOCHS_FULL = 20
+EPOCHS_FULL = 15
 AUGMENT_SUFFIXES = ("_flip", "_color", "_gray", "_persp", "_crop", "_rrcrop")
 
 train_transform = transforms.Compose([
@@ -58,15 +58,10 @@ if __name__ == "__main__":
     full = datasets.ImageFolder(TRAIN_DIR)
     classes = full.classes
 
-    original_idx = [i for i, (path, _) in enumerate(full.samples)
-                    if not any(Path(path).stem.endswith(s) for s in AUGMENT_SUFFIXES)]
-    random.shuffle(original_idx)
-    n_val = int(len(original_idx) * VAL_SPLIT)
-    val_idx = set(original_idx[:n_val])
-    train_idx = [i for i in range(len(full.samples)) if i not in val_idx]
+    train_idx, val_idx = split_by_base_image(full.samples, SEED, VAL_SPLIT, AUGMENT_SUFFIXES)
 
     train_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=train_transform), train_idx)
-    val_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform), list(val_idx))
+    val_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform), val_idx)
 
     train_loader_head = torch.utils.data.DataLoader(
         train_set,
@@ -124,8 +119,14 @@ if __name__ == "__main__":
     model.fit_generator(
         train_loader_head, val_loader_head,
         epochs=EPOCHS_HEAD,
-        callbacks=[EarlyStopping(patience=5)],
+        callbacks=[
+            EarlyStopping(patience=5)
+            ],
     )
+
+    del model.optimizer
+    torch.cuda.empty_cache()
+    dinov2.gradient_checkpointing_enable()
 
     for param in dinov2.dinov2.parameters():
         param.requires_grad = True
