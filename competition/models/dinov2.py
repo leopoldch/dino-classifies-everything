@@ -9,7 +9,7 @@ from torchvision import datasets, transforms
 from transformers import AutoModelForImageClassification
 from poutyne import Model, ModelCheckpoint, EarlyStopping
 from config import Config
-from utils import DINOv2Wrapper
+from utils import DINOv2Wrapper, split_by_base_image
 from make_test import make_test
 
 torch.backends.cudnn.benchmark = True
@@ -32,9 +32,7 @@ AUGMENT_SUFFIXES = ("_flip", "_color", "_gray", "_persp", "_crop", "_rrcrop")
 train_transform = transforms.Compose([
     transforms.RandomResizedCrop((224, 224), scale=(0.6, 1.0)),
     transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-    transforms.RandomGrayscale(p=0.1),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
@@ -50,15 +48,10 @@ if __name__ == "__main__":
     full = datasets.ImageFolder(TRAIN_DIR)
     classes = full.classes
 
-    original_idx = [i for i, (path, _) in enumerate(full.samples)
-                    if not any(Path(path).stem.endswith(s) for s in AUGMENT_SUFFIXES)]
-    random.shuffle(original_idx)
-    n_val = int(len(original_idx) * VAL_SPLIT)
-    val_idx = set(original_idx[:n_val])
-    train_idx = [i for i in range(len(full.samples)) if i not in val_idx]
+    train_idx, val_idx = split_by_base_image(full.samples, SEED, VAL_SPLIT, AUGMENT_SUFFIXES)
 
     train_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=train_transform), train_idx)
-    val_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform), list(val_idx))
+    val_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform), val_idx)
 
     train_loader = torch.utils.data.DataLoader(
         train_set,

@@ -7,7 +7,7 @@
 #SBATCH --output=train-%j.out
 #SBATCH --job-name=tp2-competition-train
 
-source .venv/bin/activate
+source ../.venv/bin/activate
 
 TRAIN_FILE="$1"
-cd competition && python models/"$TRAIN_FILE"
+python models/"$TRAIN_FILE"
