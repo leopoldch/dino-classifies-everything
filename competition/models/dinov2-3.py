@@ -30,7 +30,7 @@ BATCH_SIZE_FINAL = 8
 EPOCHS_HEAD = 20
 EPOCHS_PARTIAL = 20
 EPOCHS_FINAL = 4
-LR_HEAD = 3.2736898746313456e-4
+LR_HEAD = 3.77458222550144e-4
 LR_CLASSIFIER = 3.732081998118078e-4
 LR_BACKBONE = 2.549957122699696e-6
 LR_CLASSIFIER_FINAL = 2.2014750878852568e-5
@@ -40,6 +40,7 @@ WEIGHT_DECAY = 0.004727517721490038
 LABEL_SMOOTHING = 0.05
 PATIENCE_HEAD = 6
 PATIENCE_PARTIAL = 4
+PATIENCE_FINAL = 2
 CROP_SCALE_MIN = 0.5539410087802887
 JITTER_STRENGTH = 0.22376285911560384
 AUGMENT_SUFFIXES = ("_flip", "_color", "_gray", "_persp", "_crop", "_rrcrop")
@@ -147,7 +148,7 @@ if __name__ == "__main__":
         epochs=EPOCHS_HEAD,
         callbacks=[
             ModelCheckpoint("dinov2-3-head.pt", save_best_only=True),
-            EarlyStopping(patience=4),
+            EarlyStopping(patience=PATIENCE_HEAD),
         ],
     )
     model.load_weights("dinov2-3-head.pt")
@@ -183,7 +184,7 @@ if __name__ == "__main__":
         epochs=EPOCHS_PARTIAL,
         callbacks=[
             ModelCheckpoint("dinov2-3-partial.pt", save_best_only=True),
-            EarlyStopping(patience=4),
+            EarlyStopping(patience=PATIENCE_PARTIAL),
         ],
     )
     model.load_weights("dinov2-3-partial.pt")
@@ -209,7 +210,7 @@ if __name__ == "__main__":
         epochs=EPOCHS_FINAL,
         callbacks=[
             ModelCheckpoint("dinov2-3-final.pt", save_best_only=True),
-            EarlyStopping(patience=2),
+            EarlyStopping(patience=PATIENCE_FINAL),
         ],
     )
     model.load_weights("dinov2-3-final.pt")
