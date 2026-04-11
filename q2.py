@@ -327,12 +327,23 @@ def run_best_config():
     train_loader, val_loader, test_loader, num_classes = get_dataloaders()
 
     best_config_rnn = {
+        "hidden_size": 32,
+        "num_layers": 4,
+        "dropout": 0.2,
     }
 
     best_config_lstm = {
+        "hidden_size": 256,
+        "num_layers": 3,
+        "dropout": 0.1,
     }
 
     best_config_transformer = {
+        "d_model": 128,
+        "nhead": 4,
+        "num_layers": 3,
+        "dim_feedforward": 512,
+        "dropout": 0.1,
     }
 
     print("final: RNN")
@@ -375,7 +386,7 @@ def run_best_config():
     )
 
 
-evaluate = False
+evaluate = True
 if __name__ == "__main__":
     
     if evaluate:
