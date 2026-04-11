@@ -4,3 +4,5 @@ data/
 .idea/
 __pycache__/
 uv.lock
+.env
+wandb
