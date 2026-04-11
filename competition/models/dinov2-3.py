@@ -23,27 +23,36 @@ TRAIN_DIR = config.DATA_DIR / config.COMPETITION / "train"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMAGE_SIZE = 224
 FINAL_IMAGE_SIZE = 336
-UNFREEZE_LAST_N = 4
+UNFREEZE_LAST_N = 8
 BATCH_SIZE_HEAD = 64
 BATCH_SIZE_PARTIAL = 16
 BATCH_SIZE_FINAL = 8
 EPOCHS_HEAD = 20
 EPOCHS_PARTIAL = 20
 EPOCHS_FINAL = 4
-LR_HEAD = 5e-4
-LR_CLASSIFIER = 1e-4
-LR_BACKBONE = 5e-6
-LR_CLASSIFIER_FINAL = 5e-5
-LR_BACKBONE_FINAL = 2e-6
+LR_HEAD = 3.2736898746313456e-4
+LR_CLASSIFIER = 3.732081998118078e-4
+LR_BACKBONE = 2.549957122699696e-6
+LR_CLASSIFIER_FINAL = 2.2014750878852568e-5
+LR_BACKBONE_FINAL = 1.2514648684507728e-6
 VAL_SPLIT = 0.1
-WEIGHT_DECAY = 0.01
+WEIGHT_DECAY = 0.004727517721490038
+LABEL_SMOOTHING = 0.05
+PATIENCE_HEAD = 6
+PATIENCE_PARTIAL = 4
+CROP_SCALE_MIN = 0.5539410087802887
+JITTER_STRENGTH = 0.22376285911560384
 AUGMENT_SUFFIXES = ("_flip", "_color", "_gray", "_persp", "_crop", "_rrcrop")
-SEED = 42
+SEED = 9
 
 train_transform = transforms.Compose([
-    transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.6, 1.0)),
+    transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(CROP_SCALE_MIN, 1.0)),
     transforms.RandomHorizontalFlip(),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+    transforms.ColorJitter(
+        brightness=JITTER_STRENGTH,
+        contrast=JITTER_STRENGTH,
+        saturation=JITTER_STRENGTH,
+    ),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
@@ -55,9 +64,14 @@ val_transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-val_transform_336 = transforms.Compose([
-    transforms.Resize(384),
-    transforms.CenterCrop(FINAL_IMAGE_SIZE),
+train_transform_336 = transforms.Compose([
+    transforms.RandomResizedCrop((FINAL_IMAGE_SIZE, FINAL_IMAGE_SIZE), scale=(CROP_SCALE_MIN, 1.0)),
+    transforms.RandomHorizontalFlip(),
+    transforms.ColorJitter(
+        brightness=JITTER_STRENGTH,
+        contrast=JITTER_STRENGTH,
+        saturation=JITTER_STRENGTH,
+    ),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
@@ -124,7 +138,7 @@ if __name__ == "__main__":
     model = Model(
         network,
         torch.optim.AdamW(hf_model.classifier.parameters(), lr=LR_HEAD, weight_decay=WEIGHT_DECAY),
-        nn.CrossEntropyLoss(),
+        nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTHING),
         batch_metrics=["accuracy"],
         device=DEVICE,
     )
