@@ -21,25 +21,37 @@ DEFAULT_MODEL_NAME = "facebook/dinov2-large"
 def resize_for_crop(image_size):
     return round(image_size * 256 / 224)
 
-
-def build_eval_transform(image_size, hflip=False):
+# random apply possible si le transform n'est pas random
+def tta_transform(image_size):
     ops = [
         transforms.Resize(resize_for_crop(image_size)),
         transforms.CenterCrop(image_size),
-    ]
-    if hflip:
-        ops.append(transforms.RandomHorizontalFlip(p=1.0))
-    ops.extend([
+        # TTA PART
+        transforms.RandomHorizontalFlip(p=0.75),
+        transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.1),
+        transforms.RandomRotation((-10, -10)),
+        transforms.RandomRotation((10, 10)),
+        transforms.RandomPosterize(bits=2),
+        transforms.RandomAdjustSharpness(sharpness_factor=2),
+        ###
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
+    ]
     return transforms.Compose(ops)
 
+def default_transform(image_size):
+    ops = [
+        transforms.Resize(resize_for_crop(image_size)),
+        transforms.CenterCrop(image_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
+    return transforms.Compose(ops)
 
 def predict_test_logits(model, batch_size=BATCH_SIZE, image_size=224, tta=False):
-    transforms_to_run = [build_eval_transform(image_size)]
+    transforms_to_run = [default_transform(image_size)]
     if tta:
-        transforms_to_run.append(build_eval_transform(image_size, hflip=True))
+        transforms_to_run.append(tta_transform(image_size))
 
     logits = [
         model.predict_dataset(TestDataset(TEST_DIR, transform), batch_size=batch_size)
