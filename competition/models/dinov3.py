@@ -138,8 +138,15 @@ if __name__ == "__main__":
         "facebook/dinov3-vit7b16-pretrain-lvd1689m",
         token=HUGGING_FACE_TOKEN,
     )
+    encoder = backbone.model
+    norm = backbone.norm
 
-    network = DINOv3Classifier(backbone, hf_config.hidden_size, len(classes))
+    network = DINOv3Classifier(
+        backbone,
+        hf_config.hidden_size,
+        len(classes),
+        num_register_tokens=getattr(hf_config, "num_register_tokens", 0),
+    )
 
     # tête seulement
     for param in backbone.parameters():
@@ -169,16 +176,16 @@ if __name__ == "__main__":
 
     for param in backbone.parameters():
         param.requires_grad = False
-    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
+    for block in encoder.layer[-UNFREEZE_LAST_N:]:
         for param in block.parameters():
             param.requires_grad = True
-    for param in backbone.layernorm.parameters():
+    for param in norm.parameters():
         param.requires_grad = True
 
     backbone.gradient_checkpointing_enable()
 
-    backbone_params = list(backbone.layernorm.parameters())
-    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
+    backbone_params = list(norm.parameters())
+    for block in encoder.layer[-UNFREEZE_LAST_N:]:
         backbone_params.extend(block.parameters())
 
     model.optimizer = torch.optim.AdamW(
@@ -203,8 +210,8 @@ if __name__ == "__main__":
     del model.optimizer
     torch.cuda.empty_cache()
 
-    backbone_params = list(backbone.layernorm.parameters())
-    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
+    backbone_params = list(norm.parameters())
+    for block in encoder.layer[-UNFREEZE_LAST_N:]:
         backbone_params.extend(block.parameters())
 
     model.optimizer = torch.optim.AdamW(
