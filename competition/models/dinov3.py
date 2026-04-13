@@ -131,11 +131,11 @@ if __name__ == "__main__":
     )
 
     hf_config = AutoConfig.from_pretrained(
-        "facebook/dinov3-vit7b16-pretrain-lvd1689m",
+        "facebook/dinov3-vitl16-pretrain-lvd1689m",
         token=HUGGING_FACE_TOKEN,
     )
     backbone = AutoModel.from_pretrained(
-        "facebook/dinov3-vit7b16-pretrain-lvd1689m",
+        "facebook/dinov3-vitl16-pretrain-lvd1689m",
         token=HUGGING_FACE_TOKEN,
     )
     encoder = backbone.model
