@@ -9,7 +9,7 @@ from dotenv import load_dotenv, find_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from torchvision import datasets, transforms
 from transformers import AutoModel, AutoConfig
-from poutyne import Model, ModelCheckpoint, EarlyStopping
+from poutyne import Model, ModelCheckpoint, EarlyStopping, CosineAnnealingLR
 from config import Config
 from make_test import make_test_tta
 from utils import split_by_base_image, DINOv3Classifier
@@ -50,44 +50,51 @@ CROP_SCALE_MIN = 0.5539410087802887
 JITTER_STRENGTH = 0.22376285911560384
 AUGMENT_SUFFIXES = ("_flip", "_color", "_gray", "_persp", "_crop", "_rrcrop")
 SEED = 9
+RANDOM_ERASE_P = 0.25
+NORMALIZE_MEAN = [0.485, 0.456, 0.406]
+NORMALIZE_STD = [0.229, 0.224, 0.225]
 
-train_transform = transforms.Compose([
-    transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(CROP_SCALE_MIN, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.ColorJitter(
-        brightness=JITTER_STRENGTH,
-        contrast=JITTER_STRENGTH,
-        saturation=JITTER_STRENGTH,
-    ),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
 
-val_transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(IMAGE_SIZE),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+def resize_for_crop(image_size):
+    return round(image_size * 256 / 224)
 
-train_transform_336 = transforms.Compose([
-    transforms.RandomResizedCrop((FINAL_IMAGE_SIZE, FINAL_IMAGE_SIZE), scale=(CROP_SCALE_MIN, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.ColorJitter(
-        brightness=JITTER_STRENGTH,
-        contrast=JITTER_STRENGTH,
-        saturation=JITTER_STRENGTH,
-    ),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
 
-val_transform_336 = transforms.Compose([
-    transforms.Resize(384),
-    transforms.CenterCrop(FINAL_IMAGE_SIZE),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+def build_train_transform(image_size):
+    return transforms.Compose([
+        transforms.RandomResizedCrop((image_size, image_size), scale=(CROP_SCALE_MIN, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ColorJitter(
+            brightness=JITTER_STRENGTH,
+            contrast=JITTER_STRENGTH,
+            saturation=JITTER_STRENGTH,
+        ),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=NORMALIZE_MEAN, std=NORMALIZE_STD),
+        transforms.RandomErasing(p=RANDOM_ERASE_P, value="random"),
+    ])
+
+
+def build_eval_transform(image_size):
+    return transforms.Compose([
+        transforms.Resize(resize_for_crop(image_size)),
+        transforms.CenterCrop(image_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=NORMALIZE_MEAN, std=NORMALIZE_STD),
+    ])
+
+
+def build_callbacks(checkpoint_name, patience, epochs):
+    return [
+        ModelCheckpoint(checkpoint_name, save_best_only=True),
+        EarlyStopping(patience=patience),
+        CosineAnnealingLR(T_max=epochs, eta_min=0.0),
+    ]
+
+
+train_transform = build_train_transform(IMAGE_SIZE)
+val_transform = build_eval_transform(IMAGE_SIZE)
+train_transform_336 = build_train_transform(FINAL_IMAGE_SIZE)
+val_transform_336 = build_eval_transform(FINAL_IMAGE_SIZE)
 
 if __name__ == "__main__":
     random.seed(SEED)
@@ -163,10 +170,7 @@ if __name__ == "__main__":
     model.fit_generator(
         train_loader_head, val_loader_head,
         epochs=EPOCHS_HEAD,
-        callbacks=[
-            ModelCheckpoint("dinov3-head.pt", save_best_only=True),
-            EarlyStopping(patience=PATIENCE_HEAD),
-        ],
+        callbacks=build_callbacks("dinov3-head.pt", PATIENCE_HEAD, EPOCHS_HEAD),
     )
     model.load_weights("dinov3-head.pt")
 
@@ -199,10 +203,7 @@ if __name__ == "__main__":
     model.fit_generator(
         train_loader_partial, val_loader_partial,
         epochs=EPOCHS_PARTIAL,
-        callbacks=[
-            ModelCheckpoint("dinov3-partial.pt", save_best_only=True),
-            EarlyStopping(patience=PATIENCE_PARTIAL),
-        ],
+        callbacks=build_callbacks("dinov3-partial.pt", PATIENCE_PARTIAL, EPOCHS_PARTIAL),
     )
     model.load_weights("dinov3-partial.pt")
 
@@ -225,10 +226,7 @@ if __name__ == "__main__":
     model.fit_generator(
         train_loader_final, val_loader_final,
         epochs=EPOCHS_FINAL,
-        callbacks=[
-            ModelCheckpoint("dinov3-final.pt", save_best_only=True),
-            EarlyStopping(patience=PATIENCE_FINAL),
-        ],
+        callbacks=build_callbacks("dinov3-final.pt", PATIENCE_FINAL, EPOCHS_FINAL),
     )
     model.load_weights("dinov3-final.pt")
     make_test_tta(model, classes, image_size=FINAL_IMAGE_SIZE)

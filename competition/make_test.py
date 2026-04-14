@@ -16,6 +16,7 @@ TRAIN_DIR = config.DATA_DIR / config.COMPETITION / "train"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 32
 DEFAULT_MODEL_NAME = "facebook/dinov2-large"
+DEFAULT_TTA_RUNS = 4
 
 
 def resize_for_crop(image_size):
@@ -26,14 +27,16 @@ def tta_transform(image_size):
     ops = [
         transforms.Resize(resize_for_crop(image_size)),
         transforms.CenterCrop(image_size),
-        # TTA PART
-        transforms.RandomHorizontalFlip(p=0.75),
-        transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.1),
-        transforms.RandomRotation((-10, -10)),
-        transforms.RandomRotation((10, 10)),
-        transforms.RandomPosterize(bits=2),
-        transforms.RandomAdjustSharpness(sharpness_factor=2),
-        ###
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomApply([
+            transforms.ColorJitter(brightness=0.12, contrast=0.12, saturation=0.08),
+        ], p=0.4),
+        transforms.RandomApply([
+            transforms.RandomRotation(8),
+        ], p=0.3),
+        transforms.RandomApply([
+            transforms.RandomAdjustSharpness(sharpness_factor=1.5),
+        ], p=0.2),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ]
@@ -48,10 +51,10 @@ def default_transform(image_size):
     ]
     return transforms.Compose(ops)
 
-def predict_test_logits(model, batch_size=BATCH_SIZE, image_size=224, tta=False):
+def predict_test_logits(model, batch_size=BATCH_SIZE, image_size=224, tta=False, tta_runs=DEFAULT_TTA_RUNS):
     transforms_to_run = [default_transform(image_size)]
     if tta:
-        transforms_to_run.append(tta_transform(image_size))
+        transforms_to_run.extend(tta_transform(image_size) for _ in range(tta_runs))
 
     logits = [
         model.predict_dataset(TestDataset(TEST_DIR, transform), batch_size=batch_size)
@@ -78,8 +81,21 @@ def make_test(model, classes, batch_size=BATCH_SIZE, image_size=224, output_path
     write_submission(logits, classes, output_path)
 
 
-def make_test_tta(model, classes, batch_size=BATCH_SIZE, image_size=224, output_path="submission.csv"):
-    logits = predict_test_logits(model, batch_size=batch_size, image_size=image_size, tta=True)
+def make_test_tta(
+    model,
+    classes,
+    batch_size=BATCH_SIZE,
+    image_size=224,
+    output_path="submission.csv",
+    tta_runs=DEFAULT_TTA_RUNS,
+):
+    logits = predict_test_logits(
+        model,
+        batch_size=batch_size,
+        image_size=image_size,
+        tta=True,
+        tta_runs=tta_runs,
+    )
     write_submission(logits, classes, output_path)
 
 
@@ -112,6 +128,7 @@ def make_test_ensemble(
     image_sizes=None,
     batch_size=BATCH_SIZE,
     tta=True,
+    tta_runs=DEFAULT_TTA_RUNS,
     output_path="submission.csv",
 ):
     model_names = normalize_values(weight_paths, model_names, DEFAULT_MODEL_NAME, "--model-name")
@@ -120,7 +137,13 @@ def make_test_ensemble(
 
     for weights_path, model_name, image_size in zip(weight_paths, model_names, image_sizes):
         model = load_model(weights_path, model_name, len(classes))
-        logits = predict_test_logits(model, batch_size=batch_size, image_size=image_size, tta=tta)
+        logits = predict_test_logits(
+            model,
+            batch_size=batch_size,
+            image_size=image_size,
+            tta=tta,
+            tta_runs=tta_runs,
+        )
         avg_logits = logits if avg_logits is None else avg_logits + logits
         del model
         if torch.cuda.is_available():
@@ -137,6 +160,7 @@ if __name__ == "__main__":
     parser.add_argument("--image-size", nargs="*", type=int, dest="image_sizes")
     parser.add_argument("--output", default="submission.csv")
     parser.add_argument("--no-tta", action="store_true")
+    parser.add_argument("--tta-runs", type=int, default=DEFAULT_TTA_RUNS)
     args = parser.parse_args()
 
     classes = datasets.ImageFolder(TRAIN_DIR).classes
@@ -146,5 +170,6 @@ if __name__ == "__main__":
         model_names=args.model_names,
         image_sizes=args.image_sizes,
         tta=not args.no_tta,
+        tta_runs=args.tta_runs,
         output_path=args.output,
     )
