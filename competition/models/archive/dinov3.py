@@ -1,16 +1,21 @@
+import os
 import sys
 import random
 import numpy as np
 import torch
 import torch.nn as nn
 from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from torchvision import datasets, transforms
-from transformers import AutoModelForImageClassification
-from poutyne import Model, ModelCheckpoint, EarlyStopping
+from transformers import AutoModel, AutoConfig
+from poutyne import Model, ModelCheckpoint, EarlyStopping, CosineAnnealingLR
 from config import Config
 from make_test import make_test_tta
-from utils import DINOv2Wrapper, split_by_base_image
+from utils import split_by_base_image, DINOv3Classifier
+
+load_dotenv(find_dotenv())
+HUGGING_FACE_TOKEN = os.environ["HUGGING_FACE_TOKEN"]
 
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision("medium")
@@ -23,13 +28,13 @@ TRAIN_DIR = config.DATA_DIR / config.COMPETITION / "train"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMAGE_SIZE = 224
 FINAL_IMAGE_SIZE = 336
-UNFREEZE_LAST_N = 8
-BATCH_SIZE_HEAD = 64
-BATCH_SIZE_PARTIAL = 16
-BATCH_SIZE_FINAL = 8
+UNFREEZE_LAST_N = 12
+BATCH_SIZE_HEAD = 32
+BATCH_SIZE_PARTIAL = 8
+BATCH_SIZE_FINAL = 4
 EPOCHS_HEAD = 20
 EPOCHS_PARTIAL = 20
-EPOCHS_FINAL = 4
+EPOCHS_FINAL = 10
 LR_HEAD = 3.77458222550144e-4
 LR_CLASSIFIER = 3.732081998118078e-4
 LR_BACKBONE = 2.549957122699696e-6
@@ -40,49 +45,57 @@ WEIGHT_DECAY = 0.004727517721490038
 LABEL_SMOOTHING = 0.05
 PATIENCE_HEAD = 6
 PATIENCE_PARTIAL = 4
-PATIENCE_FINAL = 2
+PATIENCE_FINAL = 4
 CROP_SCALE_MIN = 0.5539410087802887
 JITTER_STRENGTH = 0.22376285911560384
 AUGMENT_SUFFIXES = ("_flip", "_color", "_gray", "_persp", "_crop", "_rrcrop")
 SEED = 9
+RANDOM_ERASE_P = 0.25
+NORMALIZE_MEAN = [0.485, 0.456, 0.406]
+NORMALIZE_STD = [0.229, 0.224, 0.225]
 
-train_transform = transforms.Compose([
-    transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(CROP_SCALE_MIN, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.ColorJitter(
-        brightness=JITTER_STRENGTH,
-        contrast=JITTER_STRENGTH,
-        saturation=JITTER_STRENGTH,
-    ),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
 
-val_transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(IMAGE_SIZE),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+def resize_for_crop(image_size):
 
-train_transform_336 = transforms.Compose([
-    transforms.RandomResizedCrop((FINAL_IMAGE_SIZE, FINAL_IMAGE_SIZE), scale=(CROP_SCALE_MIN, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.ColorJitter(
-        brightness=JITTER_STRENGTH,
-        contrast=JITTER_STRENGTH,
-        saturation=JITTER_STRENGTH,
-    ),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+    return round(image_size * 256 / 224)
 
-val_transform_336 = transforms.Compose([
-    transforms.Resize(384),
-    transforms.CenterCrop(FINAL_IMAGE_SIZE),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+
+def build_train_transform(image_size):
+    return transforms.Compose([
+        transforms.RandomResizedCrop((image_size, image_size), scale=(CROP_SCALE_MIN, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ColorJitter(
+            brightness=JITTER_STRENGTH,
+            contrast=JITTER_STRENGTH,
+            saturation=JITTER_STRENGTH,
+        ),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=NORMALIZE_MEAN, std=NORMALIZE_STD),
+        transforms.RandomErasing(p=RANDOM_ERASE_P, value="random"),
+    ])
+
+
+def build_eval_transform(image_size):
+    return transforms.Compose([
+        transforms.Resize(resize_for_crop(image_size)),
+        transforms.CenterCrop(image_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=NORMALIZE_MEAN, std=NORMALIZE_STD),
+    ])
+
+
+def build_callbacks(checkpoint_name, patience, epochs):
+    return [
+        ModelCheckpoint(checkpoint_name, save_best_only=True),
+        EarlyStopping(patience=patience),
+        CosineAnnealingLR(T_max=epochs, eta_min=0.0),
+    ]
+
+
+train_transform = build_train_transform(IMAGE_SIZE)
+val_transform = build_eval_transform(IMAGE_SIZE)
+train_transform_336 = build_train_transform(FINAL_IMAGE_SIZE)
+val_transform_336 = build_eval_transform(FINAL_IMAGE_SIZE)
 
 if __name__ == "__main__":
     random.seed(SEED)
@@ -90,6 +103,7 @@ if __name__ == "__main__":
     torch.manual_seed(SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(SEED)
+
 
     full = datasets.ImageFolder(TRAIN_DIR)
     classes = full.classes
@@ -125,11 +139,23 @@ if __name__ == "__main__":
         num_workers=4, pin_memory=True, persistent_workers=True,
     )
 
-    hf_model = AutoModelForImageClassification.from_pretrained(
-        "facebook/dinov2-with-registers-large", num_labels=len(classes), ignore_mismatched_sizes=True,
+    hf_config = AutoConfig.from_pretrained(
+        "facebook/dinov3-vitl16-pretrain-lvd1689m",
+        token=HUGGING_FACE_TOKEN,
     )
-    network = DINOv2Wrapper(hf_model)
-    backbone = hf_model.dinov2_with_registers if hasattr(hf_model, "dinov2_with_registers") else hf_model.dinov2
+    backbone = AutoModel.from_pretrained(
+        "facebook/dinov3-vitl16-pretrain-lvd1689m",
+        token=HUGGING_FACE_TOKEN,
+    )
+    encoder = backbone.model
+    norm = backbone.norm
+
+    network = DINOv3Classifier(
+        backbone,
+        hf_config.hidden_size,
+        len(classes),
+        num_register_tokens=getattr(hf_config, "num_register_tokens", 0),
+    )
 
     # tête seulement
     for param in backbone.parameters():
@@ -137,7 +163,7 @@ if __name__ == "__main__":
 
     model = Model(
         network,
-        torch.optim.AdamW(hf_model.classifier.parameters(), lr=LR_HEAD, weight_decay=WEIGHT_DECAY),
+        torch.optim.AdamW(network.classifier.parameters(), lr=LR_HEAD, weight_decay=WEIGHT_DECAY),
         nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTHING),
         batch_metrics=["accuracy"],
         device=DEVICE,
@@ -146,12 +172,9 @@ if __name__ == "__main__":
     model.fit_generator(
         train_loader_head, val_loader_head,
         epochs=EPOCHS_HEAD,
-        callbacks=[
-            ModelCheckpoint("dinov2-3-head.pt", save_best_only=True),
-            EarlyStopping(patience=PATIENCE_HEAD),
-        ],
+        callbacks=build_callbacks("dinov3-head.pt", PATIENCE_HEAD, EPOCHS_HEAD),
     )
-    model.load_weights("dinov2-3-head.pt")
+    model.load_weights("dinov3-head.pt")
 
     # dégel partiel avec LR différentiel
     del model.optimizer
@@ -159,21 +182,21 @@ if __name__ == "__main__":
 
     for param in backbone.parameters():
         param.requires_grad = False
-    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
+    for block in encoder.layer[-UNFREEZE_LAST_N:]:
         for param in block.parameters():
             param.requires_grad = True
-    for param in backbone.layernorm.parameters():
+    for param in norm.parameters():
         param.requires_grad = True
 
-    hf_model.gradient_checkpointing_enable()
+    backbone.gradient_checkpointing_enable()
 
-    backbone_params = list(backbone.layernorm.parameters())
-    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
+    backbone_params = list(norm.parameters())
+    for block in encoder.layer[-UNFREEZE_LAST_N:]:
         backbone_params.extend(block.parameters())
 
     model.optimizer = torch.optim.AdamW(
         [
-            {"params": list(hf_model.classifier.parameters()), "lr": LR_CLASSIFIER},
+            {"params": list(network.classifier.parameters()), "lr": LR_CLASSIFIER},
             {"params": backbone_params, "lr": LR_BACKBONE},
         ],
         weight_decay=WEIGHT_DECAY,
@@ -182,24 +205,21 @@ if __name__ == "__main__":
     model.fit_generator(
         train_loader_partial, val_loader_partial,
         epochs=EPOCHS_PARTIAL,
-        callbacks=[
-            ModelCheckpoint("dinov2-3-partial.pt", save_best_only=True),
-            EarlyStopping(patience=PATIENCE_PARTIAL),
-        ],
+        callbacks=build_callbacks("dinov3-partial.pt", PATIENCE_PARTIAL, EPOCHS_PARTIAL),
     )
-    model.load_weights("dinov2-3-partial.pt")
+    model.load_weights("dinov3-partial.pt")
 
     # fine-tuning à 336px avec LR encore plus bas
     del model.optimizer
     torch.cuda.empty_cache()
 
-    backbone_params = list(backbone.layernorm.parameters())
-    for block in backbone.encoder.layer[-UNFREEZE_LAST_N:]:
+    backbone_params = list(norm.parameters())
+    for block in encoder.layer[-UNFREEZE_LAST_N:]:
         backbone_params.extend(block.parameters())
 
     model.optimizer = torch.optim.AdamW(
         [
-            {"params": list(hf_model.classifier.parameters()), "lr": LR_CLASSIFIER_FINAL},
+            {"params": list(network.classifier.parameters()), "lr": LR_CLASSIFIER_FINAL},
             {"params": backbone_params, "lr": LR_BACKBONE_FINAL},
         ],
         weight_decay=WEIGHT_DECAY,
@@ -208,10 +228,7 @@ if __name__ == "__main__":
     model.fit_generator(
         train_loader_final, val_loader_final,
         epochs=EPOCHS_FINAL,
-        callbacks=[
-            ModelCheckpoint("dinov2-3-final.pt", save_best_only=True),
-            EarlyStopping(patience=PATIENCE_FINAL),
-        ],
+        callbacks=build_callbacks("dinov3-final.pt", PATIENCE_FINAL, EPOCHS_FINAL),
     )
-    model.load_weights("dinov2-3-final.pt")
+    model.load_weights("dinov3-final.pt")
     make_test_tta(model, classes, image_size=FINAL_IMAGE_SIZE)
