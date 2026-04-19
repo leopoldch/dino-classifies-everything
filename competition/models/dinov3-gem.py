@@ -30,7 +30,7 @@ TRAIN_DIR = config.DATA_DIR / config.COMPETITION / "train"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMAGE_SIZE = 224
-FINAL_IMAGE_SIZE = 336
+FINAL_IMAGE_SIZE = 392
 UNFREEZE_LAST_N = 12
 BATCH_SIZE_HEAD = 32
 BATCH_SIZE_PARTIAL = 8
@@ -54,7 +54,7 @@ FINAL_CROP_SCALE_MIN = 0.72
 JITTER_STRENGTH = 0.18
 FINAL_JITTER_STRENGTH = 0.08
 AUGMENT_SUFFIXES = ("_flip", "_color", "_gray", "_persp", "_crop", "_rrcrop")
-SEED = 9
+SEEDS = [3, 13, 291]
 RANDOM_ERASE_P = 0.04
 FINAL_RANDOM_ERASE_P = 0.0
 NORMALIZE_MEAN = [0.485, 0.456, 0.406]
@@ -120,31 +120,31 @@ train_transform = build_train_transform(
     RANDOM_ERASE_P,
 )
 val_transform = build_eval_transform(IMAGE_SIZE)
-train_transform_336 = build_train_transform(
+train_transform_final = build_train_transform(
     FINAL_IMAGE_SIZE,
     FINAL_CROP_SCALE_MIN,
     FINAL_JITTER_STRENGTH,
     FINAL_RANDOM_ERASE_P,
     final_phase=True,
 )
-val_transform_336 = build_eval_transform(FINAL_IMAGE_SIZE)
+val_transform_final = build_eval_transform(FINAL_IMAGE_SIZE)
 
 
-if __name__ == "__main__":
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
+def train(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(SEED)
+        torch.cuda.manual_seed_all(seed)
 
     full = datasets.ImageFolder(TRAIN_DIR)
     classes = full.classes
-    train_idx, val_idx = split_by_base_image(full.samples, SEED, VAL_SPLIT, AUGMENT_SUFFIXES)
+    train_idx, val_idx = split_by_base_image(full.samples, seed, VAL_SPLIT, AUGMENT_SUFFIXES)
 
     train_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=train_transform), train_idx)
     val_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform), val_idx)
-    train_set_336 = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=train_transform_336), train_idx)
-    val_set_336 = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform_336), val_idx)
+    train_set_final = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=train_transform_final), train_idx)
+    val_set_final = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform_final), val_idx)
 
     train_loader_head = torch.utils.data.DataLoader(
         train_set,
@@ -181,7 +181,7 @@ if __name__ == "__main__":
         persistent_workers=True,
     )
     train_loader_final = torch.utils.data.DataLoader(
-        train_set_336,
+        train_set_final,
         batch_size=BATCH_SIZE_FINAL,
         shuffle=True,
         num_workers=4,
@@ -190,7 +190,7 @@ if __name__ == "__main__":
         prefetch_factor=2,
     )
     val_loader_final = torch.utils.data.DataLoader(
-        val_set_336,
+        val_set_final,
         batch_size=BATCH_SIZE_FINAL * 2,
         shuffle=False,
         num_workers=4,
@@ -232,9 +232,9 @@ if __name__ == "__main__":
         train_loader_head,
         val_loader_head,
         epochs=EPOCHS_HEAD,
-        callbacks=build_callbacks("dinov3-gem-head.pt", PATIENCE_HEAD, EPOCHS_HEAD),
+        callbacks=build_callbacks(f"dinov3-gem-s{seed}-head.pt", PATIENCE_HEAD, EPOCHS_HEAD),
     )
-    model.load_weights("dinov3-gem-head.pt")
+    model.load_weights(f"dinov3-gem-s{seed}-head.pt")
 
     del model.optimizer
     torch.cuda.empty_cache()
@@ -266,9 +266,9 @@ if __name__ == "__main__":
         train_loader_partial,
         val_loader_partial,
         epochs=EPOCHS_PARTIAL,
-        callbacks=build_callbacks("dinov3-gem-partial.pt", PATIENCE_PARTIAL, EPOCHS_PARTIAL),
+        callbacks=build_callbacks(f"dinov3-gem-s{seed}-partial.pt", PATIENCE_PARTIAL, EPOCHS_PARTIAL),
     )
-    model.load_weights("dinov3-gem-partial.pt")
+    model.load_weights(f"dinov3-gem-s{seed}-partial.pt")
 
     del model.optimizer
     torch.cuda.empty_cache()
@@ -289,7 +289,13 @@ if __name__ == "__main__":
         train_loader_final,
         val_loader_final,
         epochs=EPOCHS_FINAL,
-        callbacks=build_callbacks("dinov3-gem-final.pt", PATIENCE_FINAL, EPOCHS_FINAL),
+        callbacks=build_callbacks(f"dinov3-gem-s{seed}-final.pt", PATIENCE_FINAL, EPOCHS_FINAL),
     )
-    model.load_weights("dinov3-gem-final.pt")
-    print("Checkpoint final: dinov3-gem-final.pt")
+    model.load_weights(f"dinov3-gem-s{seed}-final.pt")
+    print(f"Checkpoint final: dinov3-gem-s{seed}-final.pt")
+
+
+if __name__ == "__main__":
+    for seed in SEEDS:
+        print(f"seed {seed}")
+        train(seed)

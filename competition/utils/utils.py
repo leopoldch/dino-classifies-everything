@@ -21,7 +21,7 @@ SEED = 9
 AUGMENT_SUFFIXES = ("_flip", "_color", "_gray", "_persp", "_crop", "_rrcrop")
 NORMALIZE_MEAN = [0.485, 0.456, 0.406]
 NORMALIZE_STD = [0.229, 0.224, 0.225]
-DEFAULT_TTA_RUNS = 4
+DEFAULT_TTA_RUNS = 8
 IMAGE_EXTENSIONS = ("*.jpg", "*.jpeg", "*.png", "*.webp")
 
 
@@ -67,14 +67,22 @@ def build_eval_transform(image_size):
 
 def build_tta_transform(image_size):
     return transforms.Compose([
+        transforms.RandomResizedCrop(
+            (image_size, image_size),
+            scale=(0.85, 1.0),
+            ratio=(0.95, 1.05),
+        ),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=NORMALIZE_MEAN, std=NORMALIZE_STD),
+    ])
+
+
+def build_flip_transform(image_size):
+    return transforms.Compose([
         transforms.Resize(resize_for_crop(image_size)),
         transforms.CenterCrop(image_size),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomApply([
-            transforms.ColorJitter(brightness=0.12, contrast=0.12, saturation=0.08),
-        ], p=0.4),
-        transforms.RandomApply([transforms.RandomRotation(8)], p=0.3),
-        transforms.RandomApply([transforms.RandomAdjustSharpness(sharpness_factor=1.5)], p=0.2),
+        transforms.RandomHorizontalFlip(p=1.0),
         transforms.ToTensor(),
         transforms.Normalize(mean=NORMALIZE_MEAN, std=NORMALIZE_STD),
     ])
@@ -83,6 +91,7 @@ def build_tta_transform(image_size):
 def get_prediction_transforms(image_size, tta=False, tta_runs=DEFAULT_TTA_RUNS):
     transforms_to_run = [build_eval_transform(image_size)]
     if tta:
+        transforms_to_run.append(build_flip_transform(image_size))
         for _ in range(tta_runs):
             transforms_to_run.append(build_tta_transform(image_size))
     return transforms_to_run
@@ -128,7 +137,9 @@ def infer_image_size(weights_path, image_size=None):
     stem = Path(weights_path).stem.lower()
     if "final" not in stem:
         return 224
-    return 384 if "evolved" in stem else 336
+    if "evolved" in stem or "gem" in stem:
+        return 392
+    return 336
 
 
 def build_network(kind, num_classes):
