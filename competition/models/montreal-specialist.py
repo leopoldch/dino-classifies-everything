@@ -15,7 +15,7 @@ from transformers import AutoModel, AutoConfig
 from poutyne import Model, ModelCheckpoint, EarlyStopping, CosineAnnealingLR
 
 from config import Config
-from utils import DINOv3Classifier, split_by_base_image
+from utils import DINOv3GeMClassifier, split_by_base_image
 
 
 load_dotenv(find_dotenv())
@@ -32,7 +32,7 @@ TRAIN_DIR = config.DATA_DIR / config.COMPETITION / "train"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SPECIALIST_CLASSES = ("Montreal", "Quebec", "Boston")
 IMAGE_SIZE = 224
-FINAL_IMAGE_SIZE = 384
+FINAL_IMAGE_SIZE = 392
 UNFREEZE_LAST_N = 16
 BATCH_SIZE_HEAD = 32
 BATCH_SIZE_PARTIAL = 8
@@ -241,7 +241,7 @@ if __name__ == "__main__":
     encoder = backbone.model
     norm = backbone.norm
 
-    network = DINOv3Classifier(
+    network = DINOv3GeMClassifier(
         backbone,
         hf_config.hidden_size,
         len(SPECIALIST_CLASSES),

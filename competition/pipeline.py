@@ -15,7 +15,7 @@ MODELS = {
     "dinov2-evolved": "models/dinov2-evolved.py",
 }
 
-SPECIALIST_IMAGE_SIZE = 384
+SPECIALIST_IMAGE_SIZE = 392
 
 
 def run(cmd):
