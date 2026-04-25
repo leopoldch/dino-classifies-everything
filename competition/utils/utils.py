@@ -4,7 +4,8 @@ import csv
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Subset
+from PIL import Image
+from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from torchvision import datasets, transforms
 from transformers import AutoConfig, AutoModel, AutoModelForImageClassification
 
@@ -23,6 +24,47 @@ NORMALIZE_MEAN = [0.485, 0.456, 0.406]
 NORMALIZE_STD = [0.229, 0.224, 0.225]
 DEFAULT_TTA_RUNS = 8
 IMAGE_EXTENSIONS = ("*.jpg", "*.jpeg", "*.png", "*.webp")
+
+
+class PseudoLabelDataset(Dataset):
+    def __init__(self, csv_path, class_to_idx, transform):
+        self.samples = []
+        self.transform = transform
+
+        with open(csv_path, newline="") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                class_name = row["class"]
+                if class_name not in class_to_idx:
+                    continue
+                self.samples.append((Path(row["image_path"]), class_to_idx[class_name]))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        image_path, label = self.samples[index]
+        image = Image.open(image_path).convert("RGB")
+        return self.transform(image), label
+
+
+def add_pseudo_labels(train_dataset, pseudo_csv_path, classes, transform, enabled=False):
+    if not enabled:
+        return train_dataset
+
+    pseudo_csv_path = Path(pseudo_csv_path)
+    if not pseudo_csv_path.exists():
+        print(f"Pseudo-labels ignorés: fichier introuvable ({pseudo_csv_path})")
+        return train_dataset
+
+    class_to_idx = {class_name: index for index, class_name in enumerate(classes)}
+    pseudo_dataset = PseudoLabelDataset(pseudo_csv_path, class_to_idx, transform)
+    if len(pseudo_dataset) == 0:
+        print(f"Pseudo-labels ignorés: aucun exemple valide dans {pseudo_csv_path}")
+        return train_dataset
+
+    print(f"Pseudo-labels ajoutés au train: {len(pseudo_dataset)} images depuis {pseudo_csv_path}")
+    return ConcatDataset([train_dataset, pseudo_dataset])
 
 
 def split_by_base_image(samples, seed, val_split, augment_suffixes):

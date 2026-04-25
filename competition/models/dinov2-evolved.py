@@ -1,3 +1,4 @@
+import os
 import sys
 import random
 import numpy as np
@@ -12,8 +13,7 @@ from transformers import AutoConfig, AutoModel
 from poutyne import Model, ModelCheckpoint, EarlyStopping, CosineAnnealingLR
 
 from config import Config
-from make_test import make_test_tta
-from utils import DINOv2Classifier, split_by_base_image
+from utils import DINOv2Classifier, add_pseudo_labels, split_by_base_image
 
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision("medium")
@@ -22,6 +22,8 @@ torch.backends.cudnn.allow_tf32 = True
 
 config = Config()
 TRAIN_DIR = config.DATA_DIR / config.COMPETITION / "train"
+PSEUDO_CSV = Path(__file__).resolve().parents[1] / "pseudo_labels_confident.csv"
+USE_PSEUDO_LABELS = os.getenv("USE_PSEUDO_LABELS") == "1"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMAGE_SIZE = 224
@@ -108,6 +110,17 @@ def build_callbacks(checkpoint_name, patience, epochs):
     ]
 
 
+def make_loader(dataset, batch_size, shuffle):
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=4,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=True,
+    )
+
+
 train_transform = build_train_transform(
     IMAGE_SIZE,
     TRAIN_CROP_SCALE_MIN,
@@ -139,58 +152,14 @@ def train(seed):
     val_set = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform), val_idx)
     train_set_final = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=train_transform_final), train_idx)
     val_set_final = torch.utils.data.Subset(datasets.ImageFolder(TRAIN_DIR, transform=val_transform_final), val_idx)
+    train_set_final = add_pseudo_labels(train_set_final, PSEUDO_CSV, classes, train_transform_final, USE_PSEUDO_LABELS)
 
-    train_loader_head = torch.utils.data.DataLoader(
-        train_set,
-        batch_size=BATCH_SIZE_HEAD,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=True,
-        prefetch_factor=2,
-    )
-    val_loader_head = torch.utils.data.DataLoader(
-        val_set,
-        batch_size=BATCH_SIZE_HEAD * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=True,
-    )
-    train_loader_partial = torch.utils.data.DataLoader(
-        train_set,
-        batch_size=BATCH_SIZE_PARTIAL,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=True,
-        prefetch_factor=2,
-    )
-    val_loader_partial = torch.utils.data.DataLoader(
-        val_set,
-        batch_size=BATCH_SIZE_PARTIAL * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=True,
-    )
-    train_loader_final = torch.utils.data.DataLoader(
-        train_set_final,
-        batch_size=BATCH_SIZE_FINAL,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=True,
-        prefetch_factor=2,
-    )
-    val_loader_final = torch.utils.data.DataLoader(
-        val_set_final,
-        batch_size=BATCH_SIZE_FINAL * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=True,
-    )
+    train_loader_head = make_loader(train_set, BATCH_SIZE_HEAD, shuffle=True)
+    val_loader_head = make_loader(val_set, BATCH_SIZE_HEAD * 2, shuffle=False)
+    train_loader_partial = make_loader(train_set, BATCH_SIZE_PARTIAL, shuffle=True)
+    val_loader_partial = make_loader(val_set, BATCH_SIZE_PARTIAL * 2, shuffle=False)
+    train_loader_final = make_loader(train_set_final, BATCH_SIZE_FINAL, shuffle=True)
+    val_loader_final = make_loader(val_set_final, BATCH_SIZE_FINAL * 2, shuffle=False)
 
     class_weights = torch.ones(len(classes), device=DEVICE)
     if "Montreal" in classes:
@@ -284,13 +253,7 @@ def train(seed):
         callbacks=build_callbacks(f"dinov2-evolved-s{seed}-final.pt", PATIENCE_FINAL, EPOCHS_FINAL),
     )
     model.load_weights(f"dinov2-evolved-s{seed}-final.pt")
-    make_test_tta(
-        model,
-        classes,
-        image_size=FINAL_IMAGE_SIZE,
-        output_path=f"submission-dinov2-evolved-s{seed}.csv",
-        tta_runs=TTA_RUNS,
-    )
+    print(f"Checkpoint final: dinov2-evolved-s{seed}-final.pt")
 
 
 if __name__ == "__main__":

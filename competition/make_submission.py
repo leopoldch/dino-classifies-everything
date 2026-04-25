@@ -1,7 +1,5 @@
 import argparse
-import multiprocessing as mp
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import torch
@@ -24,6 +22,13 @@ from utils import (
 
 BATCH_SIZE = 16
 SPECIALIST_CLASSES = ("Montreal", "Quebec", "Boston")
+DEFAULT_ENSEMBLE = (
+    ("weights/dinov3-evolved-final.pt", 0.20),
+    ("weights/dinov2-evolved-final-dernier.pt", 0.40),
+    ("weights/dinov3-gem-final.pt", 0.40),
+)
+DEFAULT_IMAGE_SIZE = 392
+DEFAULT_MONTREAL_SPECIALIST = "weights/montreal-specialist-evolved-final.pt"
 MONTREAL_SPECIALIST_ALPHA = 0.60
 MONTREAL_SPECIALIST_MAX_MARGIN = 0.08
 MONTREAL_SPECIALIST_MIN_MASS = 0.55
@@ -43,6 +48,14 @@ def normalize_ensemble_weights(raw_weights: list[float] | None, num_models: int)
     if np.isclose(weights.sum(), 0.0):
         raise ValueError("La somme des pondérations doit être strictement positive.")
     return weights
+
+
+def default_weight_paths(root_dir: Path) -> list[Path]:
+    return [root_dir / path for path, _ in DEFAULT_ENSEMBLE]
+
+
+def default_ensemble_weights() -> list[float]:
+    return [weight for _, weight in DEFAULT_ENSEMBLE]
 
 
 def softmax_np(logits: np.ndarray) -> np.ndarray:
@@ -125,8 +138,8 @@ def predict_logits(
 
     all_logits = []
     with torch.no_grad():
-        for tfm in all_transforms:
-            dataset = TestDataset(test_files, tfm)
+        for transform in all_transforms:
+            dataset = TestDataset(test_files, transform)
             loader = torch.utils.data.DataLoader(
                 dataset,
                 batch_size=batch_size,
@@ -134,45 +147,22 @@ def predict_logits(
                 num_workers=num_workers,
                 pin_memory=torch.cuda.is_available(),
             )
-            run_logits = []
+            batch_logits = []
             for batch in loader:
-                out = network(batch.to(device))
-                run_logits.append(out.cpu().numpy())
-            all_logits.append(np.concatenate(run_logits, axis=0))
+                logits = network(batch.to(device))
+                batch_logits.append(logits.cpu().numpy())
+            all_logits.append(np.concatenate(batch_logits, axis=0))
 
     return np.mean(all_logits, axis=0)
 
 
-def predict_checkpoint_logits(
-    weights_path: str,
-    num_classes: int,
-    test_files: list[str],
-    image_size: int,
-    tta: bool,
-    tta_runs: int,
-    device: str,
-) -> tuple[str, np.ndarray]:
-    network, _, _ = load_network_from_weights(Path(weights_path), num_classes)
-    logits = predict_logits(
-        network,
-        [Path(path) for path in test_files],
-        image_size,
-        tta=tta,
-        tta_runs=tta_runs,
-        device=device,
-        num_workers=0,
-    )
-    return weights_path, logits
-
-
 def main():
     parser = argparse.ArgumentParser(description="Génère submission.csv depuis un ou plusieurs checkpoints.")
-    parser.add_argument("weights", nargs="*", help="Chemins vers les .pt. Défaut: tous les poids dans weights/")
+    parser.add_argument("weights", nargs="*", help="Chemins vers les .pt. Défaut: l'ensemble hardcodé.")
     parser.add_argument(
         "--ensemble-weights",
         type=float,
         nargs="+",
-        dest="ensemble_weights",
         help="Pondérations de l'ensemble, dans le même ordre que les checkpoints.",
     )
     parser.add_argument(
@@ -181,16 +171,20 @@ def main():
         help="Checkpoint spécialiste 3 classes pour Montréal/Québec/Boston.",
     )
     parser.add_argument(
+        "--no-montreal-specialist",
+        action="store_true",
+        help="Désactive le spécialiste hardcodé.",
+    )
+    parser.add_argument(
         "--montreal-specialist-image-size",
         type=int,
         default=None,
-        dest="montreal_specialist_image_size",
         help="Forcer la taille d'image du spécialiste.",
     )
-    parser.add_argument("--image-size", type=int, default=None, dest="image_size",
+    parser.add_argument("--image-size", type=int, default=None,
                         help="Forcer la taille d'image (sinon auto-détectée depuis le nom de fichier)")
-    parser.add_argument("--no-tta", action="store_true", dest="no_tta")
-    parser.add_argument("--tta-runs", type=int, default=DEFAULT_TTA_RUNS, dest="tta_runs")
+    parser.add_argument("--no-tta", action="store_true")
+    parser.add_argument("--tta-runs", type=int, default=DEFAULT_TTA_RUNS)
     parser.add_argument("--output", default="submission.csv")
     args = parser.parse_args()
 
@@ -205,88 +199,62 @@ def main():
         raise SystemExit(f"Aucune image trouvée dans {test_dir}")
     print(f"Test: {len(test_files)} images trouvées ({test_files[0].suffix})")
 
-    weight_paths = find_weight_files(Path(__file__).resolve().parent, args.weights)
+    root_dir = Path(__file__).resolve().parent
+    using_default_ensemble = not args.weights
+    weight_paths = (
+        default_weight_paths(root_dir)
+        if using_default_ensemble
+        else find_weight_files(root_dir, args.weights)
+    )
     if not weight_paths:
-        raise SystemExit("Aucun checkpoint trouvé dans weights/")
-    if not args.weights:
-        print(f"Poids auto-détectés: {[path.name for path in weight_paths]}")
+        raise SystemExit("Aucun checkpoint trouvé.")
+    if using_default_ensemble:
+        print(f"Ensemble hardcodé: {[path.name for path in weight_paths]}")
 
     try:
-        ensemble_weights = normalize_ensemble_weights(args.ensemble_weights, len(weight_paths))
+        raw_weights = args.ensemble_weights
+        if raw_weights is None and using_default_ensemble:
+            raw_weights = default_ensemble_weights()
+        ensemble_weights = normalize_ensemble_weights(raw_weights, len(weight_paths))
     except ValueError as exc:
         parser.error(str(exc))
-
-    use_parallel = torch.cuda.is_available() and torch.cuda.device_count() > 1 and len(weight_paths) > 1
 
     weight_infos = []
     for weights_path, ensemble_weight in zip(weight_paths, ensemble_weights):
         kind = detect_model_kind(load_state_dict(weights_path))
-        image_size = infer_image_size(weights_path, args.image_size)
+        image_size = infer_image_size(
+            weights_path,
+            args.image_size if args.image_size is not None else DEFAULT_IMAGE_SIZE,
+        )
         weight_infos.append((weights_path, kind, image_size, float(ensemble_weight)))
         print(f"\n{weights_path.name}")
         print(f"  modele: {kind}, image_size: {image_size}px, TTA: {not args.no_tta}, poids_ensemble: {ensemble_weight:.4f}")
 
     total_weight = float(ensemble_weights.sum())
-    weighted_logits_sum = None
+    all_weighted_logits = []
 
-    if use_parallel:
-        devices = [f"cuda:{index}" for index in range(torch.cuda.device_count())]
-        max_workers = min(len(weight_infos), len(devices))
-        print(f"\nParallélisation activée: {max_workers} worker(s) / GPU(s)")
+    for weights_path, _, image_size, ensemble_weight in weight_infos:
+        network, _, _ = load_network_from_weights(weights_path, len(classes))
+        logits = predict_logits(
+            network,
+            test_files,
+            image_size,
+            tta=not args.no_tta,
+            tta_runs=args.tta_runs,
+        )
+        all_weighted_logits.append(ensemble_weight * logits)
 
-        context = mp.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=max_workers, mp_context=context) as executor:
-            futures = {}
-            test_file_args = [str(path) for path in test_files]
+        del network
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-            for index, (weights_path, _, image_size, ensemble_weight) in enumerate(weight_infos):
-                device = devices[index % len(devices)]
-                future = executor.submit(
-                    predict_checkpoint_logits,
-                    str(weights_path),
-                    len(classes),
-                    test_file_args,
-                    image_size,
-                    not args.no_tta,
-                    args.tta_runs,
-                    device,
-                )
-                futures[future] = float(ensemble_weight)
+    submission_scores = np.sum(all_weighted_logits, axis=0) / total_weight
 
-            for future in as_completed(futures):
-                weights_path, logits = future.result()
-                print(f"  terminé: {Path(weights_path).name}")
-                ensemble_weight = futures[future]
-                weighted_logits = ensemble_weight * logits
-                weighted_logits_sum = (
-                    weighted_logits
-                    if weighted_logits_sum is None
-                    else weighted_logits_sum + weighted_logits
-                )
-    else:
-        for weights_path, _, image_size, ensemble_weight in weight_infos:
-            network, _, _ = load_network_from_weights(weights_path, len(classes))
-            logits = predict_logits(
-                network,
-                test_files,
-                image_size,
-                tta=not args.no_tta,
-                tta_runs=args.tta_runs,
-            )
-            weighted_logits = ensemble_weight * logits
-            weighted_logits_sum = (
-                weighted_logits
-                if weighted_logits_sum is None
-                else weighted_logits_sum + weighted_logits
-            )
+    specialist_arg = None
+    if not args.no_montreal_specialist:
+        specialist_arg = args.montreal_specialist or str(root_dir / DEFAULT_MONTREAL_SPECIALIST)
 
-            del network
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-    submission_scores = weighted_logits_sum / total_weight
-
-    if args.montreal_specialist:
+    if specialist_arg:
         apply_mask, specialist_indices, submission_probs = build_montreal_specialist_mask(
             submission_scores,
             classes,
@@ -294,21 +262,15 @@ def main():
             min_mass=MONTREAL_SPECIALIST_MIN_MASS,
         )
         specialist_count = int(apply_mask.sum())
-        specialist_path = Path(args.montreal_specialist)
+        specialist_path = Path(specialist_arg)
         specialist_kind = detect_model_kind(load_state_dict(specialist_path))
         specialist_image_size = infer_image_size(
             specialist_path,
             args.montreal_specialist_image_size,
         )
         print(f"\nSpécialiste Montréal actif: {specialist_path.name}")
-        print(
-            f"  modèle: {specialist_kind}  |  image_size: {specialist_image_size}px  |  "
-            f"alpha: {MONTREAL_SPECIALIST_ALPHA:.2f}"
-        )
-        print(
-            f"  gating: top-2 dans le trio + marge <= {MONTREAL_SPECIALIST_MAX_MARGIN:.2f} "
-            f"+ masse trio >= {MONTREAL_SPECIALIST_MIN_MASS:.2f}"
-        )
+        print(f"  modele: {specialist_kind}, image_size: {specialist_image_size}px, alpha: {MONTREAL_SPECIALIST_ALPHA:.2f}")
+        print(f"  gating: top-2 dans le trio, marge <= {MONTREAL_SPECIALIST_MAX_MARGIN:.2f}, masse trio >= {MONTREAL_SPECIALIST_MIN_MASS:.2f}")
         print(f"  images candidates: {specialist_count}")
 
         if specialist_count > 0:
