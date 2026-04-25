@@ -3,6 +3,9 @@ from PIL import Image
 from torchvision import transforms
 from config import Config
 
+# PAS UTILISÉ !!! 
+# SIMPLE IDÉE !
+
 # Normalement pas la bonne façon de faire 
 # fait directement dans les modèles 
 # cf : 

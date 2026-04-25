@@ -1,2 +1,6 @@
 *.pt
 submission.csv
+*.out
+wandb/
+*.tmp
+*.csv
