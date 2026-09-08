@@ -5,4 +5,8 @@ data/
 __pycache__/
 uv.lock
 .env
-wandb
+wandb/
+*.pt
+*.pth
+*.p
+.DS_Store

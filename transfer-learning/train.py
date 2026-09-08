@@ -1,0 +1,240 @@
+"""
+Transfer learning on CUB-200-2011: compares five strategies from random init
+to frozen DINOv2 backbone, with optional noisy labels.
+"""
+import argparse
+import random
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchvision
+import torchvision.models as models
+import torchvision.transforms as T
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoModel
+
+from dataset import NoisyLabelDataset, separate_train_test
+from deeplib.training import train
+
+COLORS = ["R", "G", "B"]
+DATA_ROOT = Path(__file__).resolve().parent.parent / "data" / "cub200"
+BATCH_SIZE = 32
+LR = 1e-3
+NUM_CLASSES = 200
+EPOCHS = 20
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+SEED = 42
+
+
+def set_seed(seed: int = SEED):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def compute_mean_std(data_root: Path = DATA_ROOT, img_size: int = 224):
+    tf = T.Compose([T.Resize((img_size, img_size)), T.ToTensor()])
+    dataset = torchvision.datasets.ImageFolder(f"{data_root}/train", transform=tf)
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+
+    mean = torch.zeros(3)
+    std = torch.zeros(3)
+    n_pixels = 0
+
+    for imgs, _ in loader:
+        B, C, H, W = imgs.shape
+        n = B * H * W
+        mean += imgs.sum(dim=[0, 2, 3])
+        std += (imgs**2).sum(dim=[0, 2, 3])
+        n_pixels += n
+
+    mean /= n_pixels
+    std = (std / n_pixels - mean**2).sqrt()
+    return mean.tolist(), std.tolist()
+
+
+def ensure_cub200_split(data_root: Path = DATA_ROOT):
+    train_root = data_root / "train"
+    test_root = data_root / "test"
+    if train_root.exists() and test_root.exists():
+        return
+
+    raw_root = data_root.parent / "CUB_200_2011" / "CUB_200_2011" / "images"
+    if not raw_root.exists():
+        raise FileNotFoundError(f"Dataset not found at {raw_root}")
+    separate_train_test(raw_root, train_root, test_root)
+
+
+def get_datasets(mean, std, img_size: int = 224, data_root: Path = DATA_ROOT, noisy: bool = False):
+    ensure_cub200_split(data_root)
+    train_transform = T.Compose([
+        T.Resize((img_size, img_size)),
+        T.RandomHorizontalFlip(),
+        T.ToTensor(),
+        T.Normalize(mean=mean, std=std),
+    ])
+    test_transform = T.Compose([
+        T.Resize((img_size, img_size)),
+        T.ToTensor(),
+        T.Normalize(mean=mean, std=std),
+    ])
+    train_dataset = torchvision.datasets.ImageFolder(f"{data_root}/train", transform=train_transform)
+    test_dataset = torchvision.datasets.ImageFolder(f"{data_root}/test", transform=test_transform)
+    if noisy:
+        train_dataset = NoisyLabelDataset(train_dataset, num_classes=NUM_CLASSES, noise_percentage=0.1)
+    return train_dataset, test_dataset
+
+
+# --- Model builders ---
+
+def build_resnet18_random() -> nn.Module:
+    model = models.resnet18(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
+    return model
+
+
+def build_resnet18_freeze_all_conv() -> nn.Module:
+    model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+    for param in model.parameters():
+        param.requires_grad = False
+    model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
+    return model
+
+
+def build_resnet18_freeze_layer1() -> nn.Module:
+    model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+    for param in model.conv1.parameters():
+        param.requires_grad = False
+    for param in model.bn1.parameters():
+        param.requires_grad = False
+    for param in model.layer1.parameters():
+        param.requires_grad = False
+    model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
+    return model
+
+
+def build_resnet18_finetune_all() -> nn.Module:
+    model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+    model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
+    return model
+
+
+class DINOv2Classifier(nn.Module):
+    def __init__(self, num_classes: int = NUM_CLASSES):
+        super().__init__()
+        self.backbone = AutoModel.from_pretrained("facebook/dinov2-small")
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+        hidden_size = self.backbone.config.hidden_size
+        self.classifier = nn.Linear(hidden_size, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        cls_token = self.backbone(pixel_values=x).last_hidden_state[:, 0, :]
+        return self.classifier(cls_token)
+
+
+def build_dinov2_small() -> nn.Module:
+    return DINOv2Classifier(num_classes=NUM_CLASSES)
+
+
+# --- Training ---
+
+def run_training(
+    model: nn.Module,
+    train_dataset: Dataset,
+    test_dataset: Dataset,
+    config_name: str,
+    num_epochs: int = EPOCHS,
+    lr: float = LR,
+):
+    optimizer = optim.Adam(
+        (param for param in model.parameters() if param.requires_grad),
+        lr=lr,
+    )
+    criterion = nn.CrossEntropyLoss()
+    history = train(
+        network=model,
+        optimizer=optimizer,
+        dataset=train_dataset,
+        n_epoch=num_epochs,
+        batch_size=BATCH_SIZE,
+        criterion=criterion,
+    )
+
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    device = torch.device(DEVICE)
+    model.to(device).eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            correct += model(inputs).argmax(1).eq(labels).sum().item()
+            total += labels.size(0)
+    test_acc = (correct / total) * 100
+    return history, test_acc
+
+
+def main(mean, std, noisy=False):
+    set_seed()
+    train_dt, test_dt = get_datasets(mean, std, img_size=224, noisy=noisy)
+    configs = [
+        ("1 - ResNet18 random init", build_resnet18_random),
+        ("2 - ResNet18 pretrained, all conv frozen", build_resnet18_freeze_all_conv),
+        ("3 - ResNet18 pretrained, layer1 frozen", build_resnet18_freeze_layer1),
+        ("4 - ResNet18 pretrained, fine-tune all", build_resnet18_finetune_all),
+        ("5 - DINOv2 Small, backbone frozen", build_dinov2_small),
+    ]
+
+    results = {}
+    for name, builder in configs:
+        print(f"Training: {name}")
+        model = builder()
+        history, test_acc = run_training(model, train_dt, test_dt, config_name=name)
+        results[name] = {"history": history, "test_acc": test_acc}
+    return results
+
+
+def print_results(results):
+    for name, data in results.items():
+        history = data["history"].history
+        final_train_acc = history["acc"][-1]
+        test_acc = data["test_acc"]
+        print(f"--- {name} ---")
+        print(f"   Train accuracy: {final_train_acc:.2f}%")
+        print(f"   Test accuracy:  {test_acc:.2f}%")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Transfer learning on CUB-200-2011")
+    parser.add_argument("-q", "--question", choices=["a", "b", "d"], default="a")
+    parser.add_argument("--coeff", action="store_true", help="Compute dataset mean/std and exit")
+    args = parser.parse_args()
+
+    if args.coeff:
+        cub_200_mean, cub_200_std = compute_mean_std()
+        for i in range(len(cub_200_mean)):
+            print(f"{COLORS[i]} : {cub_200_mean[i]:.3f} +/- {cub_200_std[i]:.3f}")
+        exit(0)
+
+    if args.question == "a":
+        results = main(IMAGENET_MEAN, IMAGENET_STD)
+        print_results(results)
+    elif args.question == "b":
+        cub_200_mean, cub_200_std = compute_mean_std()
+        for i in range(len(cub_200_mean)):
+            print(f"{COLORS[i]} : {cub_200_mean[i]:.3f} +/- {cub_200_std[i]:.3f}")
+        results = main(cub_200_mean, cub_200_std)
+        print_results(results)
+    elif args.question == "d":
+        cub_200_mean, cub_200_std = compute_mean_std()
+        for i in range(len(cub_200_mean)):
+            print(f"{COLORS[i]} : {cub_200_mean[i]:.3f} +/- {cub_200_std[i]:.3f}")
+        results = main(cub_200_mean, cub_200_std, noisy=True)
+        print_results(results)
