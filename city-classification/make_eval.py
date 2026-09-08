@@ -48,7 +48,7 @@ def build_specialist_validation_dataset(image_size, batch_size, specialist_class
 
     missing_classes = [class_name for class_name in specialist_classes if class_name not in full_dataset.class_to_idx]
     if missing_classes:
-        raise ValueError(f"Classes introuvables dans le dataset: {missing_classes}")
+        raise ValueError(f"Classes not found in dataset: {missing_classes}")
 
     selected_indices = [
         index
@@ -139,7 +139,7 @@ def save_confidence_histogram(confidences: list[float], output_path: Path, title
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.hist(confidences, bins=20, range=(0, 1), edgecolor="black")
     ax.set_xlabel("Confidence (max softmax prob)")
-    ax.set_ylabel("Nombre d'images")
+    ax.set_ylabel("Number of images")
     ax.set_title(title)
     fig.tight_layout()
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
@@ -161,20 +161,20 @@ def save_error_images(errors: list[tuple], val_idx: list[int], full_dataset, cla
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("weights", nargs="*", help="Checkpoint(s). Défaut: weights/*.pt|.pth|.p")
+    parser.add_argument("weights", nargs="*", help="Checkpoint(s). Default: weights/*.pt|.pth|.p")
     parser.add_argument("--image-size", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument(
         "--specialist-classes",
         nargs="+",
         default=None,
-        help="Évalue un checkpoint spécialiste sur un sous-ensemble de classes, ex: Montreal Quebec Boston",
+        help="Evaluate a specialist checkpoint on a class subset, e.g. Montreal Quebec Boston",
     )
     args = parser.parse_args()
 
     weight_files = find_weight_files(ROOT, args.weights, include_legacy=True)
     if not weight_files:
-        raise SystemExit("Aucun checkpoint trouvé.")
+        raise SystemExit("No checkpoints found.")
 
     for weights_path in weight_files:
         print(f"\n{weights_path.name}")
@@ -190,9 +190,9 @@ def main():
             loader, class_names, full_dataset, val_idx = build_validation_dataset(image_size, args.batch_size)
 
         network, kind, _ = load_network_from_weights(weights_path, len(class_names))
-        print(f"  modèle détecté: {kind}, image_size: {image_size}px")
+        print(f"  detected model: {kind}, image_size: {image_size}px")
         if args.specialist_classes:
-            print(f"  mode spécialiste: {class_names}")
+            print(f"  specialist mode: {class_names}")
 
         matrix, confidences, errors = run_inference(network, loader, len(class_names))
 
@@ -204,13 +204,13 @@ def main():
         print(f"  saved {cm_path}")
 
         hist_path = artefacts / f"{stem}_confidence_hist.png"
-        save_confidence_histogram(confidences, hist_path, f"Confiances - {weights_path.name}")
+        save_confidence_histogram(confidences, hist_path, f"Confidence - {weights_path.name}")
 
         errors_dir = artefacts / "errors" / stem
         save_error_images(errors, list(val_idx), full_dataset, class_names, errors_dir)
 
         acc = matrix.diagonal().sum() / matrix.sum()
-        print(f"  accuracy val: {acc:.3f} | erreurs: {len(errors)}/{len(confidences)}")
+        print(f"  val accuracy: {acc:.3f} | errors: {len(errors)}/{len(confidences)}")
 
 
 if __name__ == "__main__":

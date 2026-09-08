@@ -163,7 +163,6 @@ def train(seed):
 
     class_weights = torch.ones(len(classes), device=DEVICE)
     if "Montreal" in classes:
-        # on accorde plus de poids à montréal car moins bien reconnu
         class_weights[classes.index("Montreal")] = 1.5
 
     hf_config = AutoConfig.from_pretrained("facebook/dinov2-with-registers-large")
