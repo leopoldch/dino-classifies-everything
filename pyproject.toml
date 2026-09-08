@@ -1,5 +1,5 @@
 [project]
-name = "glo7030-deep-learning"
+name = "deep-learning-projects"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [

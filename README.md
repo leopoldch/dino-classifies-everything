@@ -1,6 +1,6 @@
-# GLO-7030 Deep Learning
+# Deep Learning Projects
 
-Course projects for GLO-7030 (Université Laval) exploring transfer learning, sequence modeling, and a Kaggle image classification competition.
+Three deep learning projects exploring transfer learning, sequence modeling, and a Kaggle image classification competition.
 
 ---
 
