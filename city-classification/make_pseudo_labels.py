@@ -93,10 +93,10 @@ def main():
     classes = datasets.ImageFolder(train_dir).classes
     test_files = find_test_images(test_dir)
     if not test_files:
-        raise SystemExit(f"Aucune image trouvee dans {test_dir}")
+        raise SystemExit(f"No images found in {test_dir}")
 
     print(f"Test: {len(test_files)} images")
-    print(f"Seuils: conf >= {MIN_CONFIDENCE}, margin >= {MIN_MARGIN}, model_min >= {MIN_MODEL_CONFIDENCE}, max/classe = {MAX_PER_CLASS}")
+    print(f"Thresholds: conf >= {MIN_CONFIDENCE}, margin >= {MIN_MARGIN}, model_min >= {MIN_MODEL_CONFIDENCE}, max/class = {MAX_PER_CLASS}")
 
     weight_paths = default_weight_paths(root_dir)
     ensemble_weights = normalize_ensemble_weights(default_ensemble_weights(), len(weight_paths))
@@ -106,7 +106,7 @@ def main():
     model_probs = []
     for weights_path, ensemble_weight in zip(weight_paths, ensemble_weights):
         kind = detect_model_kind(load_state_dict(weights_path))
-        print(f"\n{weights_path.name}, modele: {kind}, poids: {ensemble_weight:.2f}")
+        print(f"\n{weights_path.name}, model: {kind}, weight: {ensemble_weight:.2f}")
         network, _, _ = load_network_from_weights(weights_path, len(classes))
         logits = predict_logits(network, test_files, DEFAULT_IMAGE_SIZE, tta=True, tta_runs=DEFAULT_TTA_RUNS)
         weighted_logits.append(ensemble_weight * logits)
@@ -119,7 +119,7 @@ def main():
 
     specialist_mask, specialist_indices, base_probs = build_montreal_specialist_mask(base_scores, classes)
     specialist_path = root_dir / DEFAULT_MONTREAL_SPECIALIST
-    print(f"\nSpecialiste: {specialist_path.name}, candidats exclus: {int(specialist_mask.sum())}")
+    print(f"\nSpecialist: {specialist_path.name}, excluded candidates: {int(specialist_mask.sum())}")
 
     final_probs = base_probs
     if specialist_mask.any():
@@ -137,7 +137,7 @@ def main():
     csv_path = write_csv(selected, test_files, classes, predictions, confidence, margin, model_min_conf)
 
     counts = Counter(classes[predictions[i]] for i in selected)
-    print(f"\nPseudo-labels retenus: {len(selected)}")
+    print(f"\nPseudo-labels selected: {len(selected)}")
     for class_name in classes:
         print(f"  {class_name}: {counts[class_name]}")
     print(f"CSV: {csv_path}")

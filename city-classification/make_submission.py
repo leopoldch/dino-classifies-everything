@@ -40,13 +40,13 @@ def normalize_ensemble_weights(raw_weights: list[float] | None, num_models: int)
     if len(raw_weights) == 1 and num_models > 1:
         raw_weights = raw_weights * num_models
     if len(raw_weights) != num_models:
-        raise ValueError("Fournir soit une seule pondération, soit une pondération par checkpoint.")
+        raise ValueError("Provide either one weight or one weight per checkpoint.")
 
     weights = np.asarray(raw_weights, dtype=np.float32)
     if np.any(weights < 0):
-        raise ValueError("Les pondérations doivent être positives ou nulles.")
+        raise ValueError("Weights must be non-negative.")
     if np.isclose(weights.sum(), 0.0):
-        raise ValueError("La somme des pondérations doit être strictement positive.")
+        raise ValueError("Weights must sum to a positive value.")
     return weights
 
 
@@ -72,9 +72,9 @@ def build_montreal_specialist_mask(
     min_mass: float = MONTREAL_SPECIALIST_MIN_MASS,
 ) -> tuple[np.ndarray, list[int], np.ndarray]:
     if max_margin < 0.0:
-        raise ValueError("La marge maximale du spécialiste doit être positive ou nulle.")
+        raise ValueError("Specialist max margin must be non-negative.")
     if not 0.0 <= min_mass <= 1.0:
-        raise ValueError("La masse minimale du spécialiste doit être entre 0 et 1.")
+        raise ValueError("Specialist min mass must be between 0 and 1.")
 
     specialist_indices = [classes.index(class_name) for class_name in specialist_classes]
     base_probs = softmax_np(base_logits)
@@ -100,7 +100,7 @@ def apply_montreal_specialist(
     alpha: float = MONTREAL_SPECIALIST_ALPHA,
 ) -> tuple[np.ndarray, int]:
     if not 0.0 <= alpha <= 1.0:
-        raise ValueError("Le poids du spécialiste doit être entre 0 et 1.")
+        raise ValueError("Specialist alpha must be between 0 and 1.")
 
     specialist_probs = softmax_np(specialist_logits)
     combined_probs = base_probs.copy()
@@ -157,32 +157,32 @@ def predict_logits(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Génère submission.csv depuis un ou plusieurs checkpoints.")
-    parser.add_argument("weights", nargs="*", help="Chemins vers les .pt. Défaut: l'ensemble hardcodé.")
+    parser = argparse.ArgumentParser(description="Generate submission.csv from one or more checkpoints.")
+    parser.add_argument("weights", nargs="*", help="Paths to .pt files. Default: hardcoded ensemble.")
     parser.add_argument(
         "--ensemble-weights",
         type=float,
         nargs="+",
-        help="Pondérations de l'ensemble, dans le même ordre que les checkpoints.",
+        help="Ensemble weights, same order as checkpoints.",
     )
     parser.add_argument(
         "--montreal-specialist",
         default=None,
-        help="Checkpoint spécialiste 3 classes pour Montréal/Québec/Boston.",
+        help="3-class specialist checkpoint for Montreal/Quebec/Boston.",
     )
     parser.add_argument(
         "--no-montreal-specialist",
         action="store_true",
-        help="Désactive le spécialiste hardcodé.",
+        help="Disable the default specialist.",
     )
     parser.add_argument(
         "--montreal-specialist-image-size",
         type=int,
         default=None,
-        help="Forcer la taille d'image du spécialiste.",
+        help="Override specialist image size.",
     )
     parser.add_argument("--image-size", type=int, default=None,
-                        help="Forcer la taille d'image (sinon auto-détectée depuis le nom de fichier)")
+                        help="Override image size (auto-detected from filename otherwise)")
     parser.add_argument("--no-tta", action="store_true")
     parser.add_argument("--tta-runs", type=int, default=DEFAULT_TTA_RUNS)
     parser.add_argument("--output", default="submission.csv")
@@ -196,8 +196,8 @@ def main():
     test_files = find_test_images(test_dir)
 
     if not test_files:
-        raise SystemExit(f"Aucune image trouvée dans {test_dir}")
-    print(f"Test: {len(test_files)} images trouvées ({test_files[0].suffix})")
+        raise SystemExit(f"No images found in {test_dir}")
+    print(f"Test: {len(test_files)} images found ({test_files[0].suffix})")
 
     root_dir = Path(__file__).resolve().parent
     using_default_ensemble = not args.weights
@@ -207,9 +207,9 @@ def main():
         else find_weight_files(root_dir, args.weights)
     )
     if not weight_paths:
-        raise SystemExit("Aucun checkpoint trouvé.")
+        raise SystemExit("No checkpoints found.")
     if using_default_ensemble:
-        print(f"Ensemble hardcodé: {[path.name for path in weight_paths]}")
+        print(f"Default ensemble: {[path.name for path in weight_paths]}")
 
     try:
         raw_weights = args.ensemble_weights
@@ -228,7 +228,7 @@ def main():
         )
         weight_infos.append((weights_path, kind, image_size, float(ensemble_weight)))
         print(f"\n{weights_path.name}")
-        print(f"  modele: {kind}, image_size: {image_size}px, TTA: {not args.no_tta}, poids_ensemble: {ensemble_weight:.4f}")
+        print(f"  model: {kind}, image_size: {image_size}px, TTA: {not args.no_tta}, ensemble_weight: {ensemble_weight:.4f}")
 
     total_weight = float(ensemble_weights.sum())
     all_weighted_logits = []
@@ -268,10 +268,10 @@ def main():
             specialist_path,
             args.montreal_specialist_image_size,
         )
-        print(f"\nSpécialiste Montréal actif: {specialist_path.name}")
-        print(f"  modele: {specialist_kind}, image_size: {specialist_image_size}px, alpha: {MONTREAL_SPECIALIST_ALPHA:.2f}")
-        print(f"  gating: top-2 dans le trio, marge <= {MONTREAL_SPECIALIST_MAX_MARGIN:.2f}, masse trio >= {MONTREAL_SPECIALIST_MIN_MASS:.2f}")
-        print(f"  images candidates: {specialist_count}")
+        print(f"\nMontreal specialist active: {specialist_path.name}")
+        print(f"  model: {specialist_kind}, image_size: {specialist_image_size}px, alpha: {MONTREAL_SPECIALIST_ALPHA:.2f}")
+        print(f"  gating: top-2 in specialist trio, margin <= {MONTREAL_SPECIALIST_MAX_MARGIN:.2f}, trio mass >= {MONTREAL_SPECIALIST_MIN_MASS:.2f}")
+        print(f"  candidate images: {specialist_count}")
 
         if specialist_count > 0:
             specialist_network, _, _ = load_network_from_weights(
@@ -293,7 +293,7 @@ def main():
                 apply_mask,
                 alpha=MONTREAL_SPECIALIST_ALPHA,
             )
-            print(f"  spécialiste appliqué sur {specialist_count} images")
+            print(f"  specialist applied to {specialist_count} images")
 
             del specialist_network
             if torch.cuda.is_available():
@@ -302,7 +302,7 @@ def main():
             submission_scores = submission_probs
 
     output_path = write_submission_csv(submission_scores, classes, test_files, Path(args.output))
-    print(f"Submission écrite: {output_path} ({len(test_files)} lignes)")
+    print(f"Submission written: {output_path} ({len(test_files)} rows)")
 
 
 if __name__ == "__main__":

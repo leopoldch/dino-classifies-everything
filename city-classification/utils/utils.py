@@ -54,16 +54,16 @@ def add_pseudo_labels(train_dataset, pseudo_csv_path, classes, transform, enable
 
     pseudo_csv_path = Path(pseudo_csv_path)
     if not pseudo_csv_path.exists():
-        print(f"Pseudo-labels ignorés: fichier introuvable ({pseudo_csv_path})")
+        print(f"Pseudo-labels skipped: file not found ({pseudo_csv_path})")
         return train_dataset
 
     class_to_idx = {class_name: index for index, class_name in enumerate(classes)}
     pseudo_dataset = PseudoLabelDataset(pseudo_csv_path, class_to_idx, transform)
     if len(pseudo_dataset) == 0:
-        print(f"Pseudo-labels ignorés: aucun exemple valide dans {pseudo_csv_path}")
+        print(f"Pseudo-labels skipped: no valid examples in {pseudo_csv_path}")
         return train_dataset
 
-    print(f"Pseudo-labels ajoutés au train: {len(pseudo_dataset)} images depuis {pseudo_csv_path}")
+    print(f"Pseudo-labels added to training set: {len(pseudo_dataset)} images from {pseudo_csv_path}")
     return ConcatDataset([train_dataset, pseudo_dataset])
 
 

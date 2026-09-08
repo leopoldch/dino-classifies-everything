@@ -166,10 +166,10 @@ if __name__ == "__main__":
     full = datasets.ImageFolder(TRAIN_DIR)
     missing = [class_name for class_name in SPECIALIST_CLASSES if class_name not in full.class_to_idx]
     if missing:
-        raise SystemExit(f"Classes manquantes pour le spécialiste: {missing}")
+        raise SystemExit(f"Missing specialist classes: {missing}")
 
     train_indices, val_indices = build_specialist_indices(full)
-    print(f"Spécialiste: {SPECIALIST_CLASSES}")
+    print(f"Specialist: {SPECIALIST_CLASSES}")
     print(f"Train: {len(train_indices)} images | Val: {len(val_indices)} images")
 
     train_set = RemappedSubset(TRAIN_DIR, train_indices, train_transform, SPECIALIST_CLASSES)
@@ -322,4 +322,4 @@ if __name__ == "__main__":
         callbacks=build_callbacks("montreal-specialist-evolved-final.pt", PATIENCE_FINAL, EPOCHS_FINAL),
     )
     model.load_weights("montreal-specialist-evolved-final.pt")
-    print("Checkpoint final spécialiste: montreal-specialist-evolved-final.pt")
+    print("Final specialist checkpoint: montreal-specialist-evolved-final.pt")
