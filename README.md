@@ -1,6 +1,6 @@
-# Deep Learning Projects
+# DINO Classifies Everything
 
-Three deep learning projects exploring transfer learning, sequence modeling, and a Kaggle image classification competition.
+Transfer learning on birds, sequence classification on terrain, and a Kaggle city recognition competition — all powered by DINOv2/v3 and Transformers.
 
 ---
 
